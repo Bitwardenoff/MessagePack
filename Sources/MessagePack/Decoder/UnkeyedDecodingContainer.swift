@@ -12,6 +12,7 @@ extension _MessagePackDecoder {
         
         var data: Data
         var index: Data.Index
+        var currentSpec: DataSpec?
         
         lazy var count: Int? = {
             do {
@@ -100,8 +101,17 @@ extension _MessagePackDecoder.UnkeyedContainer: UnkeyedDecodingContainer {
         try checkCanDecodeValue()
         defer { self.currentIndex += 1 }
         
+        if userInfo.keys.contains(MessagePackDecoder.isArrayDataSpecKey) {
+            currentSpec = DataSpec("", false, true, (userInfo[MessagePackDecoder.dataSpecKey] as? DataSpecBuilder)?.copy() as? DataSpecBuilder)
+        }
+        
         let container = self.nestedContainers[self.currentIndex]
         let decoder = MessagePackDecoder()
+        
+        if userInfo.keys.contains(MessagePackDecoder.dataSpecKey) {
+            decoder.userInfo[MessagePackDecoder.dataSpecKey] = (userInfo[MessagePackDecoder.dataSpecKey] as? DataSpecBuilder)?.copy() as? DataSpecBuilder
+        }
+        
         let value = try decoder.decode(T.self, from: container.data)
 
         return value
@@ -137,6 +147,16 @@ extension _MessagePackDecoder.UnkeyedContainer {
         
         let startIndex = self.index
         
+        var currDataSpec: DataSpec? = nil
+        if currentSpec != nil && currentSpec!.isArray && currentSpec!.dataSpecBuilder != nil {
+            currDataSpec = DataSpec("", true, false, currentSpec!.dataSpecBuilder!.copy() as? DataSpecBuilder)
+        } else {
+            let dataSpec = self.userInfo[MessagePackDecoder.dataSpecKey] as? DataSpecBuilder
+            if let currDS = dataSpec?.next() {
+                currDataSpec = DataSpec(currDS.name, currDS.isObj, currDS.isArray, currDS.dataSpecBuilder?.copy() as? DataSpecBuilder)
+            }
+        }
+        
         let length: Int
         let format = try self.readByte()
         switch format {
@@ -168,12 +188,31 @@ extension _MessagePackDecoder.UnkeyedContainer {
             length = Int(try read(UInt32.self))
         case 0x80...0x8f, 0xde, 0xdf:
             let container = _MessagePackDecoder.KeyedContainer<AnyCodingKey>(data: self.data.suffix(from: startIndex), codingPath: self.nestedCodingPath, userInfo: self.userInfo)
+            container.currentSpec = currDataSpec
             _ = container.nestedContainers // FIXME
             self.index = container.index
             
             return container
         case 0x90...0x9f, 0xdc, 0xdd:
-            let container = _MessagePackDecoder.UnkeyedContainer(data: self.data.suffix(from: startIndex), codingPath: self.nestedCodingPath, userInfo: self.userInfo)
+            if currDataSpec != nil && currDataSpec!.isObj {
+                var objUserInfo = self.userInfo
+                objUserInfo[MessagePackDecoder.dataSpecKey] = currDataSpec!.dataSpecBuilder!
+                
+                let container = _MessagePackDecoder.KeyedContainer<AnyCodingKey>(data: self.data.suffix(from: startIndex), codingPath: self.nestedCodingPath, userInfo: objUserInfo)
+                container.currentSpec = currDataSpec
+                _ = container.nestedContainers // FIXME
+                self.index = container.index
+                
+                return container
+            }
+            
+            var arrUserInfo = self.userInfo
+            if currDataSpec != nil && currDataSpec!.isArray {
+                arrUserInfo[MessagePackDecoder.dataSpecKey] = currDataSpec!.dataSpecBuilder!
+            }
+
+            let container = _MessagePackDecoder.UnkeyedContainer(data: self.data.suffix(from: startIndex), codingPath: self.nestedCodingPath, userInfo: arrUserInfo)
+            container.currentSpec = currDataSpec
             _ = container.nestedContainers // FIXME
 
             self.index = container.index
@@ -187,7 +226,8 @@ extension _MessagePackDecoder.UnkeyedContainer {
         self.index = range.upperBound
         
         let container = _MessagePackDecoder.SingleValueContainer(data: self.data.subdata(in: range), codingPath: self.codingPath, userInfo: self.userInfo)
-
+        container.currentSpec = currDataSpec
+        
         return container
     }
 }

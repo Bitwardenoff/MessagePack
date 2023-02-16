@@ -6,37 +6,58 @@ extension _MessagePackDecoder {
             guard let count = self.count else {
                 return [:]
             }
-            
+
             var nestedContainers: [String: MessagePackDecodingContainer] = [:]
-            
+
             let unkeyedContainer = UnkeyedContainer(data: self.data.suffix(from: self.index), codingPath: self.codingPath, userInfo: self.userInfo)
-            unkeyedContainer.count = count * 2
-            
+            if currentSpec != nil && currentSpec!.isObj {
+                unkeyedContainer.count = count
+            } else {
+                unkeyedContainer.count = count * 2
+            }
+
             do {
                 var iterator = unkeyedContainer.nestedContainers.makeIterator()
 
                 for _ in 0..<count {
-                    guard let keyContainer = iterator.next() as? _MessagePackDecoder.SingleValueContainer,
-                        let container = iterator.next() else {
+                    var key: String = ""
+                    if currentSpec == nil || !currentSpec!.isObj {
+                        guard let keyContainer = iterator.next() as? _MessagePackDecoder.SingleValueContainer else {
+                            fatalError() // FIXME
+                        }
+
+                        key = try keyContainer.decode(String.self)
+                    }
+
+                    guard let container = iterator.next() else {
                         fatalError() // FIXME
                     }
-                    
-                    let key = try keyContainer.decode(String.self)
+
+
+                    if currentSpec != nil && currentSpec!.isObj {
+                        key = container.currentSpec!.name
+                    }
+
                     container.codingPath += [AnyCodingKey(stringValue: key)!]
                     nestedContainers[key] = container
                 }
             } catch {
                 fatalError("\(error)") // FIXME
             }
-            
+
             self.index = unkeyedContainer.index
-            
+
             return nestedContainers
         }()
         
         lazy var count: Int? = {
             do {
                 let format = try self.readByte()
+                
+                if currentSpec != nil && currentSpec!.isObj && 0x90...0x9f ~= format {
+                    return Int(format & 0x0F)
+                }
+                
                 switch format {
                 case 0x80...0x8f:
                     return Int(format & 0x0F)
@@ -56,7 +77,8 @@ extension _MessagePackDecoder {
         var index: Data.Index
         var codingPath: [CodingKey]
         var userInfo: [CodingUserInfoKey: Any]
-
+        var currentSpec: DataSpec?
+        
         func nestedCodingPath(forKey key: CodingKey) -> [CodingKey] {
             return self.codingPath + [key]
         }
@@ -108,6 +130,14 @@ extension _MessagePackDecoder.KeyedContainer: KeyedDecodingContainerProtocol {
         
         let container = self.nestedContainers[key.stringValue]!
         let decoder = MessagePackDecoder()
+        
+        if userInfo.keys.contains(MessagePackDecoder.dataSpecKey) {
+            decoder.userInfo[MessagePackDecoder.dataSpecKey] = container.currentSpec!.dataSpecBuilder?.copy() as? DataSpecBuilder
+            if container.currentSpec!.isArray {
+                decoder.userInfo[MessagePackDecoder.isArrayDataSpecKey] = true
+            }
+        }
+        
         let value = try decoder.decode(T.self, from: container.data)
         
         return value
