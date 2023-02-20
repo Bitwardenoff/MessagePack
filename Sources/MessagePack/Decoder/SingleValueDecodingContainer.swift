@@ -10,6 +10,7 @@ extension _MessagePackDecoder {
         var userInfo: [CodingUserInfoKey: Any]
         var data: Data
         var index: Data.Index
+        var currentSpec: DataSpec?
 
         init(data: Data, codingPath: [CodingKey], userInfo: [CodingUserInfoKey : Any]) {
             self.codingPath = codingPath

@@ -60,6 +60,14 @@ final public class MessagePackDecoder {
     internal static var nonMatchingFloatDecodingStrategyKey: CodingUserInfoKey {
         return CodingUserInfoKey(rawValue: "nonMatchingFloatDecodingStrategyKey")!
     }
+    
+    static var dataSpecKey : CodingUserInfoKey {
+        return CodingUserInfoKey(rawValue: "dataSpecKey")!
+    }
+    
+    static var isArrayDataSpecKey : CodingUserInfoKey {
+        return CodingUserInfoKey(rawValue: "isArrayDataSpecKey")!
+    }
 }
 
 // MARK: - TopLevelDecoder
@@ -96,8 +104,13 @@ extension _MessagePackDecoder: Decoder {
         assertCanCreateContainer()
 
         let container = KeyedContainer<Key>(data: self.data, codingPath: self.codingPath, userInfo: self.userInfo)
+        
+        if userInfo.keys.contains(MessagePackDecoder.dataSpecKey) {
+            container.currentSpec = DataSpec("", true, false, nil)
+        }
+        
         self.container = container
-
+        
         return KeyedDecodingContainer(container)
     }
 
@@ -127,6 +140,8 @@ protocol MessagePackDecodingContainer: class {
     
     var data: Data { get set }
     var index: Data.Index { get set }
+    
+    var currentSpec: DataSpec? { get set }
 }
 
 extension MessagePackDecodingContainer {
